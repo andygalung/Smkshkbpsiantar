@@ -1,0 +1,694 @@
+<?php 
+session_start(); 
+// Periksa apakah pengguna sudah login dan memiliki role 'kepsek' atau 'bendahara'
+if (!isset($_SESSION['username']) || ($_SESSION['role'] != 'kepsek' && $_SESSION['role'] != 'bendahara')) {
+    header("Location: index.php");
+    exit();
+}
+
+include 'koneksi.php';
+require_once 'vendor/tecnickcom/tcpdf/tcpdf.php';
+
+// Set default date range untuk filter (bulan ini)
+$currentMonth = date('Y-m');
+$startDate = $currentMonth . '-01';
+$endDate = date('Y-m-t'); // t akan mengambil hari terakhir bulan ini
+
+// Process filter jika ada
+$whereClause = "";
+if (isset($_GET['filter'])) {
+    if (!empty($_GET['start_date']) && !empty($_GET['end_date'])) {
+        $startDate = $_GET['start_date'];
+        $endDate = $_GET['end_date'];
+        $whereClause = " WHERE tanggal_pembayaran BETWEEN '$startDate' AND '$endDate'";
+    } elseif (!empty($_GET['search'])) {
+        $search = $_GET['search'];
+        $whereClause = " WHERE nama_siswa LIKE '%$search%'";
+    }
+}
+
+// Ambil data pembayaran kelas X dengan filter
+$query = "SELECT * FROM pembayaran_x $whereClause ORDER BY tanggal_pembayaran DESC";
+$result = $conn->query($query);
+
+// Hitung total pembayaran
+$totalQuery = "SELECT SUM(jumlah_bayar) as total FROM pembayaran_x $whereClause";
+$totalResult = $conn->query($totalQuery);
+$totalRow = $totalResult->fetch_assoc();
+$totalPembayaran = $totalRow['total'] ?? 0;
+
+// Hitung jumlah siswa
+$siswaQuery = "SELECT COUNT(DISTINCT nama_siswa) as jumlah_siswa FROM pembayaran_x $whereClause";
+$siswaResult = $conn->query($siswaQuery);
+$siswaRow = $siswaResult->fetch_assoc();
+$jumlahSiswa = $siswaRow['jumlah_siswa'] ?? 0;
+
+
+// Ambil data sekolah
+$nama_sekolah = "SMKS HKBP SIANTAR";
+$alamat_sekolah = "Jl. Pendidikan No. 123, Kota Cerdas";
+$telepon_sekolah = "(021) 1234-5678";
+$email_sekolah = "info@smkn1teknologi.sch.id";
+$website_sekolah = "www.smkn1teknologi.sch.id";
+$logo_path = "img/logo_smkshkbpsiantar.png"; // Path logo sekolah
+
+// Jika tombol "Ekspor PDF" ditekan
+if (isset($_GET['export']) && $_GET['export'] == "pdf") {
+    // Create new PDF document
+    $pdf = new TCPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+    
+    // Set document information
+    $pdf->SetCreator('Sistem Informasi Sekolah');
+    $pdf->SetAuthor('Bendahara Sekolah');
+    $pdf->SetTitle("Rekap Pembayaran Kelas X");
+    
+    // Remove header/footer
+    $pdf->setPrintHeader(false);
+    $pdf->setPrintFooter(false);
+    
+    // Set margins
+    $pdf->SetMargins(15, 15, 15);
+    $pdf->SetAutoPageBreak(TRUE, 15);
+    $pdf->AddPage();
+    
+    // Logo and header
+    if (file_exists($logo_path)) {
+        $pdf->Image($logo_path, 15, 15, 25);
+    }
+    
+    // School information
+    $pdf->SetFont('helvetica', 'B', 14);
+    $pdf->Cell(0, 7, $nama_sekolah, 0, 1, 'C');
+    $pdf->SetFont('helvetica', '', 10);
+    $pdf->Cell(0, 5, $alamat_sekolah, 0, 1, 'C');
+    $pdf->Cell(0, 5, "Telp: $telepon_sekolah | Email: $email_sekolah", 0, 1, 'C');
+    $pdf->Cell(0, 5, "Website: $website_sekolah", 0, 1, 'C');
+    
+    // Line separator
+    $pdf->Ln(2);
+    $pdf->Cell(0, 0, '', 'T', 1);
+    $pdf->Ln(5);
+    
+    // Title
+    $pdf->SetFont('helvetica', 'B', 16);
+    $pdf->Cell(0, 10, "REKAP PEMBAYARAN KELAS X", 0, 1, 'C');
+    $pdf-> Ln(8);
+    
+    // Table header
+    $pdf->SetFont('helvetica', 'B', 11);
+    $pdf->SetFillColor(42, 62, 80);
+    $pdf->SetTextColor(255, 255, 255);
+    $pdf->Cell(15, 10, 'No', 1, 0, 'C', true);
+    $pdf->Cell(80, 10, 'Nama Siswa', 1, 0, 'C', true);
+    $pdf->Cell(40, 10, 'Tanggal', 1, 0, 'C', true);
+    $pdf->Cell(40, 10, 'Jumlah', 1, 1, 'C', true);
+    
+    // Reset text color
+    $pdf->SetTextColor(0, 0, 0);
+    
+    // Table data
+$pdf->SetFont('helvetica', '', 10);
+$no = 1;
+
+if ($result->num_rows > 0) {
+    while ($row = $result->fetch_assoc()) {
+        $pdf->Cell(15, 10, $no++, 1, 0, 'C');
+        $pdf->Cell(80, 10, $row['nama_siswa'], 1, 0, 'L');
+        $pdf->Cell(40, 10, date('d M Y', strtotime($row['tanggal_pembayaran'])), 1, 0, 'C');
+        $pdf->Cell(40, 10, 'Rp ' . number_format($row['jumlah_bayar'], 0, ',', '.'), 1, 1, 'R');
+    }
+} else {
+    $pdf->Cell(0, 10, 'Tidak ada data pembayaran', 1, 1, 'C');
+}
+
+// Total row
+$pdf->SetFont('helvetica', 'B', 11);
+$pdf->Cell(95, 10, 'Total Pembayaran', 1, 0, 'R', true);
+$pdf->Cell(40, 10, 'Rp ' . number_format($totalPembayaran, 0, ',', '.'), 1, 1, 'R', true);
+
+// Tambahkan baris kosong setelah total pembayaran
+$pdf->Cell(0, 10, '', 0, 1); // Baris kosong
+
+// Add signature area
+$pdf->Ln(15);
+$pdf->SetFont('helvetica', '', 11);
+$pdf->Cell(0, 10, date('d') . ' ' . date('F') . ' ' . date('Y'), 0, 1, 'R');
+$pdf->Cell(0, 10, 'Bendahara Sekolah,', 0, 1, 'R');
+$pdf->Ln(15);
+$pdf->Cell(0, 10, '(____________________)', 0, 1, 'R');
+    
+    // Footer
+    $pdf->SetY(-35);
+    $pdf->SetFont('helvetica', 'I', 8);
+    $pdf->Cell(0, 0, '', 'T', 1);
+    $pdf->Ln(5);
+    $pdf->Cell(0, 10, "Dokumen ini dicetak pada tanggal " . date('d-m-Y') . " melalui Sistem Informasi $nama_sekolah", 0, 0, 'C');
+    
+    // Output PDF
+    $pdf->Output("Rekap_Pembayaran_Kelas_X.pdf", 'D');
+    exit();
+}
+?>
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rekap Pembayaran Kelas X - SMK SHK BPSiantar</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/datatables/1.10.21/css/dataTables.bootstrap5.min.css">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-light: #3b82f6;
+            --primary-dark: #1e40af;
+            --secondary: #64748b;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg-gradient: linear-gradient(135deg, #2563eb, #3b82f6);
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f1f5f9;
+            color: #334155;
+        }
+        
+        /* Header styling */
+        .page-header {
+            background: var(--bg-gradient);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .page-header::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            z-index: 0;
+        }
+        
+        .page-header-content {
+            position: relative;
+            z-index: 1;
+        }
+        
+        .page-header h2 {
+            color: white;
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .breadcrumb {
+            background: transparent;
+            padding: 0;
+            margin-bottom: 0;
+        }
+        
+        .breadcrumb-item, .breadcrumb-item a {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
+        }
+        
+        .breadcrumb-item.active {
+            color: white;
+        }
+        
+        .breadcrumb-item + .breadcrumb-item::before {
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        /* Card styling */
+        .card {
+            border: none;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+        
+        .card:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .card-header {
+            background-color: white;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            padding: 1rem 1.25rem;
+            font-weight: 600;
+        }
+        
+        /* Stats cards */
+        .stat-card {
+            border-radius: 0.75rem;
+            position: relative;
+            padding: 1.25rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+        }
+        
+        .stat-card::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 30%;
+            height: 30%;
+            opacity: 0.2;
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: bottom right;
+            transition: all 0.3s ease;
+        }
+        
+        .stat-card:hover::after {
+            width: 40%;
+            height: 40%;
+        }
+        
+        .stat-card.primary {
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
+            color: white;
+        }
+        
+        .stat-card.primary::after {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 3h16a2 2 0 0 1 2 2v6a10 10 0 0 1-10 10A10 10 0 0 1 2 11V5a2 2 0 0 1 2-2z'%3E%3C/path%3E%3Cpolyline points='8 10 12 14 16 10'%3E%3C/polyline%3E%3C/svg%3E");
+        }
+        
+        .stat-card.success {
+            background: linear-gradient(135deg, var(--success), #34d399);
+            color: white;
+        }
+        
+        .stat-card.success::after {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+        }
+        
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-label {
+            font-size: 0.875rem;
+            opacity: 0.8;
+        }
+        
+        /* Table styling */
+        .table-container {
+            background: white;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        
+        .dataTables_wrapper {
+            padding: 1.25rem;
+        }
+        
+        table.dataTable {
+            margin-top: 1rem !important;
+            margin-bottom: 1rem !important;
+            border-collapse: collapse !important;
+        }
+        
+        .table thead th {
+            background-color: #f8fafc;
+            color: #475569;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            padding: 0.75rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .table tbody td {
+            padding: 1rem 0.75rem;
+            vertical-align: middle;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        
+        .table tbody tr:hover {
+            background-color: #f8fafc;
+        }
+        
+        .table-responsive {
+            border-radius: 0.75rem;
+            overflow: hidden;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary);
+            border-color: var(--primary);
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+            border-color: var(--primary-dark);
+            box-shadow: 0 4px 6px rgba(37, 99, 235, 0.25);
+        }
+        
+        .btn-light {
+            background-color: white;
+            border-color: #e2e8f0;
+            color: #475569;
+        }
+        
+        .btn-light:hover {
+            background-color: #f8fafc;
+            border-color: #cbd5e1;
+            color: var(--primary);
+        }
+        
+        .btn-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .btn-icon i {
+            margin-right: 0.5rem;
+        }
+        
+        /* Filter section */
+        .filter-section {
+            background-color: white;
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        
+        .form-control, .form-select {
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #e2e8f0;
+            font-size: 0.875rem;
+        }
+        
+        .form-control:focus, .form-select:focus {
+            border-color: var(--primary-light);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Badges */
+        .badge {
+            padding: 0.35em 0.65em;
+            font-weight: 600;
+            border-radius: 0.25rem;
+            font-size: 0.75em;
+        }
+        
+        /* Animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease forwards;
+        }
+        
+        .animate-delay-1 {
+            animation-delay: 0.1s;
+            opacity: 0;
+        }
+        
+        .animate-delay-2 {
+            animation-delay: 0.2s;
+            opacity: 0;
+        }
+        
+        .animate-delay-3 {
+            animation-delay: 0.3s;
+            opacity: 0;
+        }
+        
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 1.5rem;
+            font-size: 0.875rem;
+            color: #64748b;
+            border-top: 1px solid #e2e8f0;
+            margin-top: 2rem;
+        }
+        
+        /* Status badges */
+        .status-pending {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+        
+        .status-success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        
+        /* Print styles */
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            
+            .table-container {
+                box-shadow: none;
+            }
+            
+            .card {
+                box-shadow: none;
+                border: 1px solid #e2e8f0;
+            }
+            
+            body {
+                background-color: white;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid py-4">
+        <!-- Header -->
+        <div class="page-header mb-4 animate-fade-in">
+            <div class="page-header-content">
+                <div class="row align-items-center">
+                    <div class="col">
+                        <h2><i class="fas fa-file-invoice-dollar me-2"></i>Rekap Pembayaran Kelas X</h2>
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb">
+                                <li class="breadcrumb-item"><a href="<?php echo ($_SESSION['role'] == 'kepsek') ? 'dashboard_kepsek.php' : 'dashboard_bendahara.php'; ?>">Dashboard</a></li>
+                                <li class="breadcrumb-item active" aria-current="page">Rekap Pembayaran Kelas X</li>
+                            </ol>
+                        </nav>
+                    </div>
+                    <div class="col-auto">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-light btn-icon no-print" onclick="window.print()">
+                                <i class="fas fa-print"></i> Cetak
+                            </button>
+                            <a href="?export=pdf" class="btn btn-light btn-icon no-print">
+                                <i class="fas fa-file-pdf"></i> Ekspor PDF
+                            </a>
+                           
+                           
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Stats Cards -->
+        <div class="row no-print animate-fade-in animate-delay-1">
+            <div class="col-md-6 col-lg-3 mb-4">
+                <div class="stat-card primary h-100">
+                    <div class="stat-value">Rp <?php echo number_format($totalPembayaran, 0, ',', '.'); ?></div>
+                    <div class="stat-label">Total Pembayaran</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-lg-3 mb-4">
+                <div class="stat-card success h-100">
+                    <div class="stat-value"><?php echo number_format($jumlahSiswa, 0, ',', '.'); ?></div>
+                    <div class="stat-label">Jumlah Siswa</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-lg-3 mb-4">
+                <div class="stat-card primary h-100">
+                    <div class="stat-value"><?php echo $result->num_rows; ?></div>
+                    <div class="stat-label">Total Transaksi</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-lg-3 mb-4">
+                <div class="stat-card success h-100">
+                    <div class="stat-value">
+                        <?php 
+                            echo $jumlahSiswa > 0 ? 
+                                'Rp ' . number_format($totalPembayaran / $jumlahSiswa, 0, ',', '.') : 
+                                'Rp 0';
+                        ?>
+                    </div>
+                    <div class="stat-label">Rata-rata Pembayaran</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Filter Section -->
+        <div class="filter-section no-print animate-fade-in animate-delay-2">
+            <form action="" method="GET" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="start_date" class="form-label">Tanggal Mulai</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" value="<?php echo $startDate; ?>">
+                </div>
+                <div class="col-md-3">
+                    <label for="end_date" class="form-label">Tanggal Akhir</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" value="<?php echo $endDate; ?>">
+                </div>
+                <div class="col-md-3">
+                    <label for="search" class="form-label">Cari Siswa</label>
+                    <input type="text" class="form-control" id="search" name="search" placeholder="Nama siswa..." value="<?php echo $_GET['search'] ?? ''; ?>">
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" name="filter" value="1" class="btn btn-primary w-100">
+                        <i class="fas fa-filter me-2"></i>Terapkan Filter
+                    </button>
+                </div>
+            </form>
+        </div>
+        
+        <!-- Table -->
+        <div class="table-container animate-fade-in animate-delay-3">
+            <div class="table-responsive">
+                <table id="paymentTable" class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th width="5%">No</th>
+                            <th width="30%">Nama Siswa</th>
+                            <th width="15%">Tanggal</th>
+                            <th width="15%">Jumlah</th>
+                            
+                            <th width="20%" class="no-print">Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php
+                        $no = 1;
+                        if ($result->num_rows > 0) {
+                            while ($row = $result->fetch_assoc()) {
+                                // Menentukan status pembayaran (Contoh: berdasarkan jumlah)
+                                $status = $row['jumlah_bayar'] >= 1000000 ? 
+                                    '<span class="badge status-success">Lunas</span>' : 
+                                    '<span class="badge status-pending">Belum Lunas</span>';
+                                
+                                echo "<tr>";
+                                echo "<td>" . $no++ . "</td>";
+                                echo "<td>" . $row['nama_siswa'] . "</td>";
+                                echo "<td>" . date('d M Y', strtotime($row['tanggal_pembayaran'])) . "</td>";
+                                echo "<td>Rp " . number_format($row['jumlah_bayar'], 0, ',', '.') . "</td>";
+                                
+                                echo "<td class='no-print'>
+                                    <button class='btn btn-sm btn-primary me-1' data-bs-toggle='tooltip' title='Detail'><i class='fas fa-eye'></i></button>
+                                    <button class='btn btn-sm btn-warning me-1' data-bs-toggle='tooltip' title='Edit'><i class='fas fa-edit'></i></button>
+                                    <button class='btn btn-sm btn-danger' data-bs-toggle='tooltip' title='Hapus'><i class='fas fa-trash'></i></button>
+                                </td>";
+                                echo "</tr>";
+                            }
+                        } else {
+                            echo "<tr><td colspan='6' class='text-center'>Tidak ada data pembayaran</td></tr>";
+                        }
+                        ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Back Button -->
+        <div class="text-end mt-4 no-print animate-fade-in">
+            <a href="<?php echo ($_SESSION['role'] == 'kepsek') ? 'dashboard_kepsek.php' : 'dashboard_bendahara.php'; ?>" class="btn btn-primary btn-icon">
+                <i class="fas fa-arrow-left me-2"></i>Kembali ke Dashboard
+            </a>
+        </div>
+        
+        
+    
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/datatables/1.10.21/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/datatables/1.10.21/js/dataTables.bootstrap5.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            // Initialize DataTable
+            var table = $('#paymentTable').DataTable({
+                language: {
+                    url: '//cdn.datatables.net/plug-ins/1.10.24/i18n/Indonesian.json'
+                },
+                pageLength: 10,
+                lengthMenu: [[10, 25, 50, -1], [10, 25, 50, "Semua"]],
+                responsive: true,
+                dom: '<"row mb-3"<"col-md-6"l><"col-md-6"f>>rtip',
+                "columnDefs": [
+                    { "orderable": false, "targets": 5 }
+                ]
+            });
+            
+            // Tooltip initialization
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl)
+            });
+            
+            // Export buttons (dummy functionality)
+            $('#exportExcel').on('click', function() {
+                alert('Fungsi Export Excel akan ditambahkan segera!');
+            });
+            
+            $('#exportPDF').on('click', function() {
+                alert('Fungsi Export PDF akan ditambahkan segera!');
+            });
+            
+            // Add animation to the rows
+            $('.table tbody tr').each(function(index) {
+                $(this).css({
+                    'animation-delay': (0.1 + index * 0.05) + 's',
+                    'animation-name': 'fadeIn',
+                    'animation-duration': '0.5s',
+                    'animation-fill-mode': 'both'
+                });
+            });
+            
+            // Table row hover effect
+            $('.table tbody tr').hover(
+                function() {
+                    $(this).find('td').css('background-color', '#f8fafc');
+                },
+                function() {
+                    $(this).find('td').css('background-color', '');
+                }
+            );
+        });
+    </script>
+    <?php include('footer.php'); ?>   
+</body>
+</html>
